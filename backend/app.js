@@ -1,40 +1,48 @@
-require('dotenv').config();
-
-// Node/Express
 const express = require('express');
-const http = require('http');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const dotenv = require('dotenv');
+const twilio = require('twilio');
 
-const router = require('./src/router');
+dotenv.config();
 
-// Create Express webapp
 const app = express();
-app.use(cors());
-
-// Add body parser for Notify device registration
-app.use(bodyParser.urlencoded({extended: true}));
-app.use(bodyParser.json());
-
-app.use(router);
-
-// production error handler
-// no stacktraces leaked to user
-app.use(function(err, req, res, next) {
-  console.trace(err);
-  res.status(err.status || 500);
-  res.send({
-    message: err.message,
-    error: {},
-  });
-});
-
-
-// Create http server and run it
-const server = http.createServer(app);
 const port = process.env.PORT || 5000;
-server.listen(port, function() {
-  console.log('Express server running on *:' + port);
+
+// Middleware
+app.use(cors());
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
+// Twilio client initialization
+const AccessToken = twilio.jwt.AccessToken;
+const ChatGrant = AccessToken.ChatGrant;
+
+// Endpoint to generate token
+app.post('/token', (req, res) => {
+    const { identity } = req.body;
+
+    const chatGrant = new ChatGrant({
+        serviceSid: process.env.TWILIO_CHAT_SERVICE_SID
+    });
+
+    const token = new AccessToken(
+        process.env.TWILIO_ACCOUNT_SID,
+        process.env.TWILIO_API_KEY,
+        process.env.TWILIO_API_SECRET,
+        { identity }
+    );
+
+    token.addGrant(chatGrant);
+    token.identity = identity;
+
+    res.send({
+        identity: identity,
+        token: token.toJwt()
+    });
 });
 
-module.exports = app;
+// Start server
+app.listen(port, () => {
+    console.log(`Server is running on http://localhost:${port}`);
+});

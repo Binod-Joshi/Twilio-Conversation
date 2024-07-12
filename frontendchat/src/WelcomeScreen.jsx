@@ -8,28 +8,42 @@ import {
   Typography,
   Button,
 } from "@mui/material";
-import { useNavigate } from 'react-router-dom'; // import useNavigate
+import { useNavigate } from "react-router-dom";
+import axios from "axios";
+import { Client } from "@twilio/conversations";
 
 const WelcomeScreen = () => {
-  const [email, setEmail] = useState('');
-  const [room, setRoom] = useState('');
-  const navigate = useNavigate(); // use useNavigate hook
+  const [email, setEmail] = useState("");
+  const [room, setRoom] = useState("");
+  const [message, setMessage] = useState("");
+  const [selected, setSelected] = useState("Register");
+  const navigate = useNavigate();
 
   const login = () => {
-    console.log(email,room);
-    // if (
-    //     email &&
-    //     room &&
-    //     /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*$/.test(email)
-    //   )
-
-    if (
-      email &&
-      room
-    ) {
-        console.log(email,room);
-      navigate('/chat', { state: { room, email } }); // use navigate function with route and state
+    if (email && room) {
+      navigate("/chat", { state: { room, email } });
     }
+  };
+
+  const Register = async () => {
+    if (email) {
+      const token = await getToken(email);
+      if (token) {
+        console.log(token);
+        const client = new Client(token);
+        console.log(client);
+        if(client){
+          setMessage("registered successfully.");
+        }
+      }
+    }
+  };
+
+  const getToken = async (email) => {
+    const response = await axios.post(`http://localhost:5000/token`, {
+      identity: email,
+    });
+    return response.data.token;
   };
 
   const handleChange = (event) => {
@@ -39,6 +53,11 @@ const WelcomeScreen = () => {
     } else if (name === "room") {
       setRoom(value);
     }
+  };
+
+  const handleSelect = (data) => {
+    console.log(data);
+    setSelected(data);
   };
 
   return (
@@ -57,6 +76,10 @@ const WelcomeScreen = () => {
         justifyContent="center"
         alignItems="center"
       >
+        <div>
+          <button onClick={(e) => handleSelect("Register")}>Register</button>
+          <button onClick={(e) => handleSelect("Login")}>Login</button>
+        </div>
         <Card style={styles.card} elevation={10}>
           <Grid item style={styles.gridItem}>
             <TextField
@@ -71,28 +94,44 @@ const WelcomeScreen = () => {
               onChange={handleChange}
             />
           </Grid>
-          <Grid item style={styles.gridItem}>
-            <TextField
-              name="room"
-              required
-              style={styles.textField}
-              label="Room"
-              placeholder="Enter room name"
-              variant="outlined"
-              value={room}
-              onChange={handleChange}
-            />
-          </Grid>
-          <Grid item style={styles.gridItem}>
-            <Button
-              color="primary"
-              variant="contained"
-              style={styles.button}
-              onClick={login}
-            >
-              Login
-            </Button>
-          </Grid>
+          {selected !== "Register" && (
+            <Grid item style={styles.gridItem}>
+              <TextField
+                name="room"
+                required
+                style={styles.textField}
+                label="Room"
+                placeholder="Enter room name"
+                variant="outlined"
+                value={room}
+                onChange={handleChange}
+              />
+            </Grid>
+          )}
+          {selected !== "Register" ? (
+            <Grid item style={styles.gridItem}>
+              <Button
+                color="primary"
+                variant="contained"
+                style={styles.button}
+                onClick={login}
+              >
+                Login
+              </Button>
+            </Grid>
+          ) : (
+            <Grid item style={styles.gridItem}>
+              <Button
+                color="primary"
+                variant="contained"
+                style={styles.button}
+                onClick={Register}
+              >
+                Register
+              </Button>
+            </Grid>
+          )}
+          <h3>{message}</h3>
         </Card>
       </Grid>
     </>

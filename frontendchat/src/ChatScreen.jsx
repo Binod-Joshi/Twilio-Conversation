@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   AppBar,
   Backdrop,
@@ -11,38 +11,31 @@ import {
   TextField,
   Toolbar,
   Typography,
+  Button,
 } from "@mui/material";
 import { Send } from "@mui/icons-material";
 import axios from "axios";
 import ChatItem from "./ChatItem";
-// import Chat from "tqi"
-// import Chat from "twilio-chat";
 import { Client } from "@twilio/conversations";
 import { useNavigate, useLocation } from "react-router-dom";
 
-const ChatScreen = (props) => {
+const ChatScreen = () => {
   const [text, setText] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [Conversation, setConversation] = useState(null);
+  const [conversation, setConversation] = useState(null);
+  const [statusString, setStatusString] = useState("");
+  const [status, setStatus] = useState("");
+  const [participantEmail, setParticipantEmail] = useState(""); // New state for participant email
   const navigate = useNavigate();
   const scrollDiv = useRef(null);
+  const listenersAdded = useRef(false);
 
-  const { state } = useLocation();
-  const { room, email } = state;
-  console.log(room,email);
-
-  const getToken = async (email) => {
-    const response = await axios.get(`http://localhost:5000/token/${email}`);
-    const { data } = response;
-    return data.token;
-  };
+  const location = useLocation();
+  const { room, email } = location.state || {};
 
   useEffect(() => {
-    let token = "";
-
     if (!email || !room) {
-      //   props.history.replace("/");
       navigate("/");
       return;
     }
@@ -50,85 +43,160 @@ const ChatScreen = (props) => {
     const initializeChat = async () => {
       setLoading(true);
       try {
-        token = await getToken(email);
-      } catch {
-        throw new Error("unable to get token, please reload this page");
-      }
-
-      const client = new Client(token);
-// Use client
-
-
-      client.on("tokenAboutToExpire", async () => {
         const token = await getToken(email);
-        client.updateToken(token);
-      });
+        const client = new Client(token);
 
-      client.on("tokenExpired", async () => {
-        const token = await getToken(email);
-        client.updateToken(token);
-      });
+        client.on("connectionStateChanged", (state) => {
+          console.log("Connection state changed to:", state); // Added console log for debugging
+          switch (state) {
+            case "connecting":
+              setStatusString("Connecting to Twilio...");
+              setStatus("default");
+              break;
+            case "connected":
+              setStatusString("You are connected.");
+              setStatus("success");
+              break;
+            case "disconnecting":
+              setStatusString("Disconnecting from Twilio...");
+              setStatus("default");
+              break;
+            case "disconnected":
+              setStatusString("Disconnected.");
+              setStatus("warning");
+              break;
+            case "denied":
+              setStatusString("Failed to connect.");
+              setStatus("error");
+              break;
+            default:
+              break;
+          }
+        });
 
-      client.on("ConversationJoined", async (Conversation) => {
-        const messages = await Conversation.getMessages();
-        setMessages(messages.items || []);
-        scrollToBottom();
-      });
-
-      try {
-        const Conversation = await client.getConversationByUniqueName(room);
-        await joinConversation(Conversation);
-        setConversation(Conversation);
-        setLoading(false);
-      } catch {
-        try {
-          const conversation = await client.createConversation({
-            uniqueName: room,
-            friendlyName: room,
+        if (!listenersAdded.current) {
+          client.on("conversationAdded", (conv) => {
+            console.log("Conversation added:", conv.sid); // Added console log for debugging
+            conv.getMessages().then((paginator) => {
+              setMessages(paginator.items);
+            });
+            conv.on("messageAdded", (message) => {
+              setMessages((prevMessages) => [...prevMessages, message]);
+            });
+            setConversation(conv);
           });
-          await joinConversation(conversation);
-          setConversation(conversation);
-          setLoading(false);
-        } catch (error) {
-          console.error("Error creating conversation:", error);
-          // You can handle specific errors here (e.g., if (error.code === '...'))
-          throw new Error("Unable to create conversation, please reload this page");
+
+          client.on("conversationJoined", (conv) => {
+            console.log("Joined conversation:", conv.sid); // Added console log for debugging
+            setConversation(conv);
+          });
+
+          listenersAdded.current = true;
         }
+
+        let generalConversation;
+        try {
+          const allConversations = await client.getSubscribedConversations();
+          generalConversation = allConversations.items.find(
+            (conv) => conv.uniqueName === room
+          );
+
+          if (!generalConversation) {
+            console.log("Hello");
+            const newConversation = await client.createConversation({
+              uniqueName: room,
+              friendlyName: room,
+            });
+            await newConversation.join();
+            setConversation(newConversation);
+          } else {
+            await generalConversation.join();
+            setConversation(generalConversation);
+          }
+        } catch (error) {
+          console.error("Error fetching or creating conversation:", error); // Added detailed error logging
+          if (error.message.includes("Conflict")) {
+            const allConversations = await client.getSubscribedConversations();
+            generalConversation = allConversations.items.find(
+              (conv) => conv.uniqueName === room
+            );
+            if (generalConversation) {
+              await generalConversation.join();
+              setConversation(generalConversation);
+            } else {
+              console.error("Unable to fetch or create conversation:", error);
+            }
+          } else {
+            console.error("Unable to fetch or create conversation:", error);
+          }
+        }
+
+        setLoading(false);
+      } catch (error) {
+        console.error("Unable to initialize chat:", error);
+        setLoading(false);
       }
     };
 
     initializeChat();
-  }, [props]);
+  }, [email, room, navigate]);
 
-  const joinConversation = async (Conversation) => {
-    if (Conversation.ConversationState.status !== "joined") {
-      await Conversation.join();
-    }
-    Conversation.on("messageAdded", handleMessageAdded);
-  };
-
-  const handleMessageAdded = (message) => {
-    setMessages((prevMessages) => [...prevMessages, message]);
-    scrollToBottom();
+  const getToken = async (email) => {
+    const response = await axios.post(`http://localhost:5000/token`, {
+      identity: email,
+    });
+    return response.data.token;
   };
 
   const scrollToBottom = () => {
-    const scrollHeight = scrollDiv.current.scrollHeight;
-    const height = scrollDiv.current.clientHeight;
-    const maxScrollTop = scrollHeight - height;
-    scrollDiv.current.scrollTop = maxScrollTop > 0 ? maxScrollTop : 0;
-  };
-
-  const sendMessage = () => {
-    if (text && String(text).trim()) {
-      setLoading(true);
-      console.log(text);
-      Conversation && Conversation.sendMessage(text);
-      setText("");
-      setLoading(false);
+    if (scrollDiv.current) {
+      const scrollHeight = scrollDiv.current.scrollHeight;
+      const height = scrollDiv.current.clientHeight;
+      const maxScrollTop = scrollHeight - height;
+      scrollDiv.current.scrollTop = maxScrollTop > 0 ? maxScrollTop : 0;
     }
   };
 
+  const sendMessage = async () => {
+    if (text.trim() && conversation) {
+      setLoading(true);
+      try {
+        await conversation.sendMessage(text);
+        setText("");
+        scrollToBottom();
+      } catch (error) {
+        console.error("Error sending message:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  const addParticipant = async () => {
+    if (participantEmail.trim() && conversation) {
+      try {
+        const participants = await conversation.getParticipants();
+        const participantExists = participants.some(participant => participant.identity === participantEmail.trim());
+        
+        if (participantExists) {
+          console.log(`${participantEmail} is already in the conversation.`);
+          return;
+        }
+  
+        await conversation.add(participantEmail.trim());
+        console.log(`${participantEmail} added to the conversation.`);
+        setParticipantEmail("");
+      } catch (error) {
+        console.error(`Error adding participant ${participantEmail}:`, error);
+        if (error.body && error.body.message) {
+          alert(`Error: ${error.body.message}`);
+        } else {
+          alert('Error adding participant.');
+        }
+      }
+    }
+  };
+  
 
   return (
     <Container component="main" maxWidth="md">
@@ -146,14 +214,19 @@ const ChatScreen = (props) => {
       <Grid container direction="column" style={styles.mainGrid}>
         <Grid item style={styles.gridItemChatList} ref={scrollDiv}>
           <List dense={true}>
-            {messages &&
-              messages.map((message) => (
-                <ChatItem key={message.index} message={message} email={email} />
-              ))}
+            {messages.map((message, index) => (
+              <ChatItem key={index} message={message} email={email} />
+            ))}
           </List>
         </Grid>
         <Grid item style={styles.gridItemMessage}>
-          <Grid container direction="row" justify="center" alignItems="center">
+          <Grid
+            container
+            direction="row"
+            justify="center"
+            alignItems="center"
+            spacing={1}
+          >
             <Grid item style={styles.textFieldContainer}>
               <TextField
                 required
@@ -163,7 +236,6 @@ const ChatScreen = (props) => {
                 multiline
                 rows={2}
                 value={text}
-                disabled={!Conversation}
                 onChange={(event) => setText(event.target.value)}
               />
             </Grid>
@@ -171,27 +243,59 @@ const ChatScreen = (props) => {
               <IconButton
                 style={styles.sendButton}
                 onClick={sendMessage}
-                disabled={!Conversation || !text}
+                disabled={!conversation || !text.trim()}
               >
                 <Send style={styles.sendIcon} />
               </IconButton>
             </Grid>
           </Grid>
         </Grid>
+        <Grid item style={styles.gridItemAddParticipant}>
+          <Grid
+            container
+            direction="row"
+            justify="center"
+            alignItems="center"
+            spacing={1}
+          >
+            <Grid item style={styles.textFieldContainer}>
+              <TextField
+                style={styles.textField}
+                placeholder="Enter participant email"
+                variant="outlined"
+                value={participantEmail}
+                onChange={(event) => setParticipantEmail(event.target.value)}
+              />
+            </Grid>
+            <Grid item>
+              <Button
+                variant="contained"
+                style={styles.addButton}
+                onClick={addParticipant}
+                disabled={!conversation || !participantEmail.trim()}
+              >
+                Add Participant
+              </Button>
+            </Grid>
+          </Grid>
+        </Grid>
       </Grid>
+      <h1>{statusString}</h1>
     </Container>
   );
 };
 
 const styles = {
-  textField: { width: "100%", borderWidth: 0, borderColor: "transparent" },
+  textField: { width: "100%" },
   textFieldContainer: { flex: 1, marginRight: 12 },
   gridItem: { paddingTop: 12, paddingBottom: 12 },
   gridItemChatList: { overflow: "auto", height: "70vh" },
   gridItemMessage: { marginTop: 12, marginBottom: 12 },
+  gridItemAddParticipant: { marginTop: 12, marginBottom: 12 }, // New style for adding participants
   sendButton: { backgroundColor: "#3f51b5" },
   sendIcon: { color: "white" },
-  mainGrid: { paddingTop: 100, borderWidth: 1 },
+  addButton: { backgroundColor: "#4caf50", color: "white" }, // New style for add participant button
+  mainGrid: { paddingTop: 100 },
 };
 
 export default ChatScreen;

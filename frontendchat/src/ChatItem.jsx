@@ -3,6 +3,7 @@ import { ListItem } from '@mui/material';
 
 const ChatItem = ({ message, email }) => {
   const isOwnMessage = message.author === email;
+  console.log(message.author);
 
   return (
     <ListItem style={styles.listItem(isOwnMessage)}>
